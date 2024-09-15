@@ -71,6 +71,9 @@ function App() {
         setGuesses((prevGuesses) => [...prevGuesses, guess.toUpperCase()]);
         setOutput((prevOutput) => [...prevOutput, data.result]);
         setGuess("");
+        if (data.result === "00000") {
+          alert("Congratulations! You won the game!");
+        }
       })
       .catch((error) => {
         alert("An error occurred: " + error.message);
@@ -105,7 +108,7 @@ function App() {
     setGuess("");
     setNumberOfGuesses(0);
     setGameStarted(false);
-  }
+  };
 
   return (
     <div className="App">
@@ -134,7 +137,8 @@ function App() {
           </>
         ) : (
           <>
-            <p> Please, input a WORD to guess </p>
+            <text> List of words: {words.join(", ")}</text>
+            <text> Please, input a WORD to guess </text>
             <form onSubmit={handleSubmitGuess}>
               <input type="text" onChange={handleChangeGuess} value={guess} />
               <button type="submit">Submit</button>
@@ -149,9 +153,7 @@ function App() {
             </tr>
           ))}
         </table>
-        <button onClick={handleRestart}>
-          Restart
-        </button>
+        <button onClick={handleRestart}>Restart</button>
       </header>
     </div>
   );
