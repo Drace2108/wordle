@@ -64,22 +64,6 @@ app.post("/start", async (req, res) => {
   // Set number of guesses
   numberOfGuesses = req.body.numberOfGuesses;
   wordToGuess = "";
-
-  // // Set a randomly chosen word from words table
-  // const getRandomWord = () => {
-  //   return new Promise((resolve, reject) => {
-  //     db.all("SELECT word FROM words", [], (err, rows) => {
-  //       if (err) {
-  //         return reject(err);
-  //       }
-  //       const randomIndex = Math.floor(Math.random() * rows.length);
-  //       word = rows[randomIndex].word;
-  //       resolve();
-  //     });
-  //   });
-  // };
-  // await getRandomWord();
-
   res.json({});
 });
 
@@ -103,8 +87,8 @@ app.post("/guess", async (req, res) => {
       );
     });
   };
-  const row = await checkWin();
-  if (row) {
+  const won = await checkWin();
+  if (won) {
     return res.status(400).json({
       error: "You already won!",
     });
@@ -129,17 +113,21 @@ app.post("/guess", async (req, res) => {
   }
 
   // Check if the guessed word exists in the list of words
-  const checkWordExists = (guess) => {
+  const checkWordExists = () => {
     return new Promise((resolve, reject) => {
-      db.get("SELECT word FROM words WHERE word = ?", [guess], (err, row) => {
-        if (err) {
-          return reject(err);
+      db.get(
+        "SELECT word FROM words WHERE word = ?",
+        [lowercaseGuess],
+        (err, row) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(row);
         }
-        resolve(row);
-      });
+      );
     });
   };
-  const wordExists = await checkWordExists(lowercaseGuess);
+  const wordExists = await checkWordExists();
   if (!wordExists) {
     return res.status(400).json({
       error: "The list of words does not contain the word you guessed.",
@@ -172,7 +160,7 @@ app.post("/guess", async (req, res) => {
   const updateGuessedWord = () => {
     return new Promise((resolve, reject) => {
       db.run(
-        "UPDATE words SET guessed = true AND possible = false WHERE word = ?",
+        "UPDATE words SET guessed = true WHERE word = ?",
         [lowercaseGuess],
         (err) => {
           if (err) {
@@ -191,7 +179,7 @@ app.post("/guess", async (req, res) => {
     result.push("_");
   }
 
-  // Choose word or reduce the number of possible words
+  // If word to guess is not chosen, choose word or reduce the number of possible words
   if (wordToGuess.length !== 5) {
     // Get all possible words
     const getPossibleWords = () => {
@@ -209,9 +197,12 @@ app.post("/guess", async (req, res) => {
       });
     };
     const possibleWords = await getPossibleWords();
+
+    // Create a map of possible words with hit and present counters
     const possibleWordsMap = new Map();
     let remainingCandidates = [];
-    possibleWords.forEach(async (word) => {
+    possibleWords.forEach(async (record) => {
+      const word = record.word;
       const charFrequencyMap = new Map();
       let hit = 0;
       let present = 0;
@@ -220,7 +211,7 @@ app.post("/guess", async (req, res) => {
         charFrequencyMap.set(char, (charFrequencyMap.get(char) || 0) + 1);
       }
       for (let i = 0; i < 5; i++) {
-        const char = word.word[i];
+        const char = word[i];
         if (char === lowercaseGuess[i]) {
           hit++;
           charFrequencyMap.set(char, charFrequencyMap.get(char) - 1);
@@ -230,7 +221,7 @@ app.post("/guess", async (req, res) => {
         }
       }
       for (let i = 0; i < 5; i++) {
-        const char = word.word[i];
+        const char = word[i];
         if (char !== lowercaseGuess[i] && charFrequencyMap.has(char)) {
           present++;
           if (charFrequencyMap.get(char) === 1) {
@@ -240,19 +231,18 @@ app.post("/guess", async (req, res) => {
           }
         }
       }
-      possibleWordsMap.set(word.word, {
+      possibleWordsMap.set(word, {
         hit: hit,
         present: present,
       });
       if (hit === 0 && present === 0) {
-        remainingCandidates.push(word.word);
-      }
-      else{
+        remainingCandidates.push(word);
+      } else {
         const updateImpossibleWords = () => {
           return new Promise((resolve, reject) => {
             db.run(
               "UPDATE words SET possible = false WHERE word = ?",
-              [word.word],
+              [word],
               (err) => {
                 if (err) {
                   return reject(err);
@@ -265,7 +255,7 @@ app.post("/guess", async (req, res) => {
         await updateImpossibleWords();
       }
     });
-    console.log(possibleWordsMap);
+    // Choose a word if there are no remaining candidates or only one
     if (remainingCandidates.length === 0) {
       let minHit = Infinity;
       let minPresent = Infinity;
@@ -282,13 +272,13 @@ app.post("/guess", async (req, res) => {
 
       if (chosenWord) {
         wordToGuess = chosenWord;
-      } else {
-        // Handle the case when no word is chosen
-        // You can return an error response or take any other appropriate action
-        return res.status(400).json({ error: "No word can be chosen." });
       }
+    } else if (remainingCandidates.length === 1) {
+      wordToGuess = remainingCandidates[0];
     }
   }
+
+  // If word to guess is chosen, compare word and guess
   if (wordToGuess.length === 5) {
     const charFrequencyMap = new Map();
     for (let i = 0; i < 5; i++) {
@@ -320,7 +310,7 @@ app.post("/guess", async (req, res) => {
   }
 
   numberOfGuesses--;
-  return res.json({ result: result.join(" ") });
+  return res.json({ result: result.join('') });
 });
 
 app.listen(PORT, () => {
