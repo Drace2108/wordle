@@ -2,12 +2,39 @@ import React from "react";
 import "./App.css";
 
 function App() {
-  const [output, setOutput] = React.useState([]);
-  const [guesses, setGuesses] = React.useState([]);
-  const [words, setWords] = React.useState([]);
-  const [guess, setGuess] = React.useState("");
-  const [numberOfGuesses, setNumberOfGuesses] = React.useState(0);
-  const [gameStarted, setGameStarted] = React.useState(false);
+  const [output, setOutput] = React.useState(
+    localStorage.getItem("output")
+      ? JSON.parse(localStorage.getItem("output"))
+      : []
+  );
+  const [guesses, setGuesses] = React.useState(
+    localStorage.getItem("guesses")
+      ? JSON.parse(localStorage.getItem("guesses"))
+      : []
+  );
+  const [words, setWords] = React.useState(
+    localStorage.getItem("words")
+      ? JSON.parse(localStorage.getItem("words"))
+      : []
+  );
+  const [guess, setGuess] = React.useState(localStorage.getItem("guess") || "");
+  const [numberOfGuesses, setNumberOfGuesses] = React.useState(
+    localStorage.getItem("numberOfGuesses")
+      ? parseInt(localStorage.getItem("numberOfGuesses"))
+      : 0
+  );
+  const [gameStarted, setGameStarted] = React.useState(
+    localStorage.getItem("gameStarted") === "true"
+  );
+
+  React.useEffect(() => {
+    localStorage.setItem("output", JSON.stringify(output));
+    localStorage.setItem("guesses", JSON.stringify(guesses));
+    localStorage.setItem("words", JSON.stringify(words));
+    localStorage.setItem("guess", guess);
+    localStorage.setItem("numberOfGuesses", numberOfGuesses.toString());
+    localStorage.setItem("gameStarted", gameStarted.toString());
+  }, [output, guesses, words, guess, numberOfGuesses, gameStarted]);
 
   const handleChangeGuess = (e) => {
     let word = e.target.value;
@@ -20,7 +47,7 @@ function App() {
 
   const handleChangeWords = (e) => {
     const inputText = e.target.value;
-    const wordList = inputText.split(',').map(word => word.trim());
+    const wordList = inputText.split(",").map((word) => word.trim());
     setWords(wordList);
   };
 
@@ -43,6 +70,7 @@ function App() {
       .then((data) => {
         setGuesses((prevGuesses) => [...prevGuesses, guess.toUpperCase()]);
         setOutput((prevOutput) => [...prevOutput, data.result]);
+        setGuess("");
       })
       .catch((error) => {
         alert("An error occurred: " + error.message);
@@ -70,20 +98,36 @@ function App() {
       });
   };
 
+  const handleRestart = () => {
+    setOutput([]);
+    setGuesses([]);
+    setWords([]);
+    setGuess("");
+    setNumberOfGuesses(0);
+    setGameStarted(false);
+  }
+
   return (
     <div className="App">
       <header className="App-header">
         {!gameStarted ? (
           <>
             <p>
-              {" "}
-              Please, set a maximum NUMBER of guesses and list of WORDS
-              (separated by commas){" "}
+              Please, input a maximum NUMBER of guesses and list of WORDS
+              (separated by commas)
             </p>
             <form onSubmit={handleSubmitNumberOfRounds}>
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <input type="number" onChange={handleChangeNumberOfRounds} placeholder="Number of guesses"/>
-                <input type="text" onChange={handleChangeWords} placeholder="List of words"/>
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <input
+                  type="number"
+                  onChange={handleChangeNumberOfRounds}
+                  placeholder="Number of guesses"
+                />
+                <input
+                  type="text"
+                  onChange={handleChangeWords}
+                  placeholder="List of words"
+                />
               </div>
               <button type="submit">Submit</button>
             </form>
@@ -98,13 +142,16 @@ function App() {
           </>
         )}
         <table>
-            {output.map((element, index) => (
-              <tr>
-                <td>{guesses[index]}</td>
-                <td>{element}</td>
-              </tr>
-            ))}
+          {output.map((element, index) => (
+            <tr>
+              <td>{guesses[index]}:</td>
+              <td>{element}</td>
+            </tr>
+          ))}
         </table>
+        <button onClick={handleRestart}>
+          Restart
+        </button>
       </header>
     </div>
   );
