@@ -169,10 +169,11 @@ function App() {
       <header className="App-header">
         {!gameStarted ? (
           <>
-            <p>
-              Please, input a maximum NUMBER of guesses and list of WORDS
-              (separated by commas)
-            </p>
+            {player === 0
+              ? "Please, select a player number"
+              : player === 1
+              ? "Please, input a maximum NUMBER of guesses and list of WORDS (separated by commas)"
+              : ""}
             <form onSubmit={handleSubmitStart}>
               <div>
                 <input
