@@ -38,12 +38,13 @@ npm start
 4. Player 1 always starts first
 5. First to guess the word is winner
 
+Output schema:
+* '0' stands for Hit (the letter is in the correct spot of answer)
+* '?' stands for Present (the letter is in the answer but wrong spot)
+* '_' stands for Miss (the letter is not in the answer)
+
 ### Demo
-
-
-https://github.com/user-attachments/assets/4e9d356e-2316-4f2e-bb8b-f09d92830699
-
-
+https://github.com/user-attachments/assets/ffab668d-870a-4945-a193-44c952441a77
 
 ## Authors
 
