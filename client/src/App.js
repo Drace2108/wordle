@@ -217,10 +217,13 @@ function App() {
           </>
         ) : (
           <>
-            <p> You are Player {player}</p>
-            <p> List of words: {words.join(", ")}</p>
-            <p> Please, input a WORD to guess </p>
-            <p> Remaining number of guesses: {numberOfGuesses-guesses.size}</p>
+            You are Player {player}
+            <br></br>
+            List of words: {words.join(", ")}
+            <br></br>
+            Please, input a WORD to guess
+            <br></br> Remaining number of guesses:{" "}
+            {numberOfGuesses - (guesses.size ?? 0)}
             <form onSubmit={handleSubmitGuess}>
               <input type="text" onChange={handleChangeGuess} value={guess} />
               <button type="submit">Submit</button>
