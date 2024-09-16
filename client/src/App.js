@@ -2,16 +2,10 @@ import React from "react";
 import "./App.css";
 
 function App() {
-  const [output, setOutput] = React.useState(
-    localStorage.getItem("output")
-      ? JSON.parse(localStorage.getItem("output"))
-      : []
-  );
-  const [guesses, setGuesses] = React.useState(
-    localStorage.getItem("guesses")
-      ? JSON.parse(localStorage.getItem("guesses"))
-      : []
-  );
+  const [guesses, setGuesses] = React.useState(() => {
+    const storedGuesses = localStorage.getItem("guesses");
+    return storedGuesses ? new Map(JSON.parse(storedGuesses)) : new Map();
+  });
   const [words, setWords] = React.useState(
     localStorage.getItem("words")
       ? JSON.parse(localStorage.getItem("words"))
@@ -26,15 +20,56 @@ function App() {
   const [gameStarted, setGameStarted] = React.useState(
     localStorage.getItem("gameStarted") === "true"
   );
+  const [player, setPlayer] = React.useState(
+    localStorage.getItem("player")
+      ? parseInt(localStorage.getItem("player"))
+      : 0
+  );
 
   React.useEffect(() => {
-    localStorage.setItem("output", JSON.stringify(output));
-    localStorage.setItem("guesses", JSON.stringify(guesses));
+    localStorage.setItem(
+      "guesses",
+      JSON.stringify(Array.from(guesses.entries()))
+    );
     localStorage.setItem("words", JSON.stringify(words));
     localStorage.setItem("guess", guess);
     localStorage.setItem("numberOfGuesses", numberOfGuesses.toString());
     localStorage.setItem("gameStarted", gameStarted.toString());
-  }, [output, guesses, words, guess, numberOfGuesses, gameStarted]);
+    localStorage.setItem("player", player.toString());
+  }, [guesses, words, guess, numberOfGuesses, gameStarted, player]);
+
+  const ws = new WebSocket("ws://localhost:8080");
+
+  ws.onopen = () => {
+    console.log("Connected to the WebSocket server");
+  };
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    switch (data.type) {
+      case "gameStarted":
+        if (words.length === 0) {
+          setWords(data.words);
+          setNumberOfGuesses(data.numberOfGuesses);
+        }
+        break;
+      case "guessMade":
+        if (data.turn !== player) {
+          setGuesses((prevGuesses) => {
+            const newGuesses = new Map(prevGuesses);
+            newGuesses.set(data.guess, {
+              output: data.output,
+              player: data.turn,
+            });
+            return newGuesses;
+          });
+        }
+        break;
+      default:
+        break;
+    }
+  };
 
   const handleChangeGuess = (e) => {
     let word = e.target.value;
@@ -58,7 +93,7 @@ function App() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ guess }),
+      body: JSON.stringify({ guess, player }),
     })
       .then(async (res) => {
         if (!res.ok) {
@@ -68,10 +103,16 @@ function App() {
         return res.json();
       })
       .then((data) => {
-        setGuesses((prevGuesses) => [...prevGuesses, guess.toUpperCase()]);
-        setOutput((prevOutput) => [...prevOutput, data.result]);
+        setGuesses((prevGuesses) => {
+          const newGuesses = new Map(prevGuesses);
+          newGuesses.set(guess.toUpperCase(), {
+            output: data.output,
+            player: player,
+          });
+          return newGuesses;
+        });
         setGuess("");
-        if (data.result === "00000") {
+        if (data.output === "00000") {
           alert("Congratulations! You won the game!");
         }
       })
@@ -80,21 +121,26 @@ function App() {
       });
   };
 
-  const handleSubmitNumberOfRounds = (e) => {
+  const handleSubmitStart = (e) => {
     e.preventDefault();
     fetch("/start", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ numberOfGuesses, words }),
+      body: JSON.stringify({ numberOfGuesses, words, player }),
     })
       .then(async (res) => {
         if (!res.ok) {
           const errorData = await res.json();
           throw new Error(errorData.error || "Something went wrong.");
         }
+        return res.json();
+      })
+      .then((data) => {
         setGameStarted(true);
+        setWords(data.words);
+        setNumberOfGuesses(data.numberOfGuesses);
       })
       .catch((error) => {
         alert("An error occurred: " + error.message);
@@ -102,12 +148,20 @@ function App() {
   };
 
   const handleRestart = () => {
-    setOutput([]);
+    localStorage.clear();
     setGuesses([]);
     setWords([]);
     setGuess("");
     setNumberOfGuesses(0);
     setGameStarted(false);
+    setPlayer(0);
+    fetch("/restart", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ player }),
+    });
   };
 
   return (
@@ -119,40 +173,71 @@ function App() {
               Please, input a maximum NUMBER of guesses and list of WORDS
               (separated by commas)
             </p>
-            <form onSubmit={handleSubmitNumberOfRounds}>
-              <div style={{ display: "flex", flexDirection: "column" }}>
+            <form onSubmit={handleSubmitStart}>
+              <div>
                 <input
-                  type="number"
-                  onChange={handleChangeNumberOfRounds}
-                  placeholder="Number of guesses"
+                  type="radio"
+                  id="player1"
+                  name="player"
+                  value="player1"
+                  checked={player === 1}
+                  onChange={() => setPlayer(1)}
                 />
-                <input
-                  type="text"
-                  onChange={handleChangeWords}
-                  placeholder="List of words"
-                />
+                <label htmlFor="player1">Player 1</label>
               </div>
+              <div>
+                <input
+                  type="radio"
+                  id="player2"
+                  name="player"
+                  value="player2"
+                  checked={player === 2}
+                  onChange={() => setPlayer(2)}
+                />
+                <label htmlFor="player2">Player 2</label>
+              </div>
+              {player === 1 ? (
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <input
+                    type="number"
+                    onChange={handleChangeNumberOfRounds}
+                    placeholder="Number of guesses"
+                  />
+                  <input
+                    type="text"
+                    onChange={handleChangeWords}
+                    placeholder="List of words"
+                  />
+                </div>
+              ) : (
+                ""
+              )}
               <button type="submit">Submit</button>
             </form>
           </>
         ) : (
           <>
-            <text> List of words: {words.join(", ")}</text>
-            <text> Please, input a WORD to guess </text>
+            <p> You are Player {player}</p>
+            <p> List of words: {words.join(", ")}</p>
+            <p> Please, input a WORD to guess </p>
+            <p> Remaining number of guesses: {numberOfGuesses-guesses.size}</p>
             <form onSubmit={handleSubmitGuess}>
               <input type="text" onChange={handleChangeGuess} value={guess} />
               <button type="submit">Submit</button>
             </form>
+            <table>
+              <tbody>
+                {Array.from(guesses).map(([guess, { output, player }]) => (
+                  <tr key={guess}>
+                    <td>Player {player}:</td>
+                    <td>{guess}</td>
+                    <td>{output}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </>
         )}
-        <table>
-          {output.map((element, index) => (
-            <tr>
-              <td>{guesses[index]}:</td>
-              <td>{element}</td>
-            </tr>
-          ))}
-        </table>
         <button onClick={handleRestart}>Restart</button>
       </header>
     </div>
