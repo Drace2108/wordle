@@ -1,5 +1,5 @@
 const db = require("../models/db");
-const wss = require("../utils/websocket");
+const broadcast = require("../utils/websocket");
 
 // Initialize variables
 let wordToGuess = "";
@@ -8,15 +8,6 @@ let turn = 0;
 let winner = 0;
 let player1Connected = false;
 let player2Connected = false;
-
-// WebSocket broadcast to all clients
-function broadcast(data) {
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
-  });
-}
 
 // Get all words from the words table
 const getWords = async () => {
