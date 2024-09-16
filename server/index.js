@@ -1,43 +1,105 @@
+const e = require("express");
 const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
-const db = new sqlite3.Database(":memory:");
-const PORT = process.env.PORT || 3001;
+const WebSocket = require("ws");
+
+const db = new sqlite3.Database("database.db");
 const app = express();
+const wss = new WebSocket.Server({ port: 8080 });
 app.use(express.json());
+
+// Initialize variables
+let wordToGuess = "";
+let numberOfGuesses = 0;
+let turn = 0;
+let winner = 0;
+let player1Connected = false;
+let player2Connected = false;
+
+// WebSocket server
+wss.on("connection", (ws) => {
+  ws.send(JSON.stringify({ message: "Welcome to the Wordle game!" }));
+});
 
 // Initialize database
 db.serialize(() => {
-  db.run("CREATE TABLE words (word TEXT, possible BOOLEAN, guessed BOOLEAN)");
+  db.run(
+    "CREATE TABLE IF NOT EXISTS words (word TEXT, possible BOOLEAN, guessed BOOLEAN)",
+    (err) => {
+      if (err) {
+        console.error("Error creating table:", err);
+      }
+    }
+  );
 });
 
-// Initialize the word to guess and number of guesses
-let wordToGuess = "";
-let numberOfGuesses = 0;
-
-// Start a new game by setting the number of guesses and the list of words
-app.post("/start", async (req, res) => {
-  // Validate input
-  if (req.body.numberOfGuesses < 1) {
-    return res
-      .status(400)
-      .json({ error: "Invalid input. Number of rounds should be at least 1" });
-  }
-  if (req.body.words.length < 1) {
-    return res.status(400).json({
-      error: "Invalid input. List of words should contain at least 1 word",
-    });
-  }
-  req.body.words.forEach((w) => {
-    if (w.length !== 5 || !/^[a-zA-Z]+$/.test(w)) {
-      return res.status(400).json({
-        error:
-          "Invalid input. Words should be 5 characters long and contain only characters",
-      });
+// WebSocket broadcast to all clients
+function broadcast(data) {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
     }
   });
+}
 
-  // Clear words table
-  await new Promise((resolve, reject) => {
+// Get all words from the words table
+const getWords = async () => {
+  return new Promise((resolve, reject) => {
+    const words = [];
+    db.all("SELECT word FROM words", [], (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        rows.forEach((row) => {
+          words.push(row.word);
+        });
+        resolve(words);
+      }
+    });
+  });
+};
+
+// Generate the output based on the word and the guess
+const generateOutput = (word, guess) => {
+  const output = [];
+  for (let i = 0; i < 5; i++) {
+    output.push("_");
+  }
+
+  const charFrequencyMap = new Map();
+  for (let i = 0; i < 5; i++) {
+    const char = word[i];
+    charFrequencyMap.set(char, (charFrequencyMap.get(char) || 0) + 1);
+  }
+
+  for (let i = 0; i < 5; i++) {
+    const char = guess[i];
+    if (char === word[i]) {
+      output[i] = "0";
+      charFrequencyMap.set(char, charFrequencyMap.get(char) - 1);
+      if (charFrequencyMap.get(char) === 0) {
+        charFrequencyMap.delete(char);
+      }
+    }
+  }
+
+  for (let i = 0; i < 5; i++) {
+    const char = guess[i];
+    if (char !== word[i] && charFrequencyMap.has(char)) {
+      output[i] = "?";
+      charFrequencyMap.set(char, charFrequencyMap.get(char) - 1);
+      if (charFrequencyMap.get(char) === 0) {
+        charFrequencyMap.delete(char);
+      }
+    }
+  }
+
+  return output;
+};
+
+// Clear the words table
+const clearWordsTable = () => {
+  return new Promise((resolve, reject) => {
     db.run("DELETE FROM words", [], (err) => {
       if (err) {
         return reject(err);
@@ -45,52 +107,91 @@ app.post("/start", async (req, res) => {
       resolve();
     });
   });
+};
 
-  // Insert list of words into words table with possible = true and guessed = false
-  const wordsStatement = db.prepare("INSERT INTO words VALUES (?, ?, ?)");
-  const promises = req.body.words.map((word) => {
-    return new Promise((resolve, reject) => {
-      wordsStatement.run(word.toLowerCase(), true, false, (err) => {
-        if (err) {
-          return reject(err);
-        }
-        resolve();
+// Start a new game by setting the number of guesses and the list of words
+app.post("/start", async (req, res) => {
+  if (req.body.player === 1) {
+    if (player1Connected) {
+      return res.status(400).json({ error: "Player 1 already joined" });
+    }
+    // Validate input
+    if (req.body.numberOfGuesses < 1) {
+      return res.status(400).json({
+        error: "Invalid input. Number of rounds should be at least 1",
+      });
+    }
+    if (req.body.words.length < 1) {
+      return res.status(400).json({
+        error: "Invalid input. List of words should contain at least 1 word",
+      });
+    }
+    req.body.words.forEach((w) => {
+      if (w.length !== 5 || !/^[a-zA-Z]+$/.test(w)) {
+        return res.status(400).json({
+          error:
+            "Invalid input. Words should be 5 characters long and contain only characters",
+        });
+      }
+    });
+
+    await clearWordsTable();
+
+    // Insert list of words into words table with possible = true and guessed = false
+    const wordsStatement = db.prepare("INSERT INTO words VALUES (?, ?, ?)");
+    const promises = req.body.words.map((word) => {
+      return new Promise((resolve, reject) => {
+        wordsStatement.run(word.toUpperCase(), true, false, (err) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve();
+        });
       });
     });
-  });
-  await Promise.all(promises);
-  wordsStatement.finalize();
-
-  // Set number of guesses
-  numberOfGuesses = req.body.numberOfGuesses;
+    await Promise.all(promises);
+    wordsStatement.finalize();
+    turn = 1;
+    numberOfGuesses = req.body.numberOfGuesses;
+    player1Connected = true;
+  } else if (req.body.player === 2) {
+    if (player2Connected) {
+      return res.status(400).json({ error: "Player 2 already joined" });
+    }
+    if (!player1Connected) {
+      return res.status(400).json({ error: "Player 1 has not joined yet" });
+    }
+    player2Connected = true;
+  } else {
+    return res
+      .status(400)
+      .json({ error: "Invalid player number. Choose 1 or 2" });
+  }
   wordToGuess = "";
-  res.json({});
+  const words = await getWords();
+  res.json({ message: "Game started successfully", words, numberOfGuesses });
+  broadcast({ type: "gameStarted", words, numberOfGuesses });
 });
 
 // Make a guess
 app.post("/guess", async (req, res) => {
   let { guess } = req.body;
-  const lowercaseGuess = guess.toLowerCase();
+  const uppercaseGuess = guess.toUpperCase();
 
-  // Check if the user has already won
-  const checkWin = () => {
-    return new Promise((resolve, reject) => {
-      db.get(
-        "SELECT word FROM words WHERE word = ? AND guessed = true",
-        [wordToGuess],
-        (err, row) => {
-          if (err) {
-            return reject(err);
-          }
-          resolve(row);
-        }
-      );
-    });
-  };
-  const won = await checkWin();
-  if (won) {
+  // Check if both players have joined
+  if (!player1Connected || !player2Connected) {
+    return res.status(400).json({ error: "Both players must join the game" });
+  }
+
+  // Check if it's the player's turn
+  if (turn !== req.body.player) {
+    return res.status(400).json({ error: "It's not your turn" });
+  }
+
+  // Check if there is a winner
+  if (winner !== 0) {
     return res.status(400).json({
-      error: "You already won!",
+      error: `Player ${winner} already won!`,
     });
   }
 
@@ -117,7 +218,7 @@ app.post("/guess", async (req, res) => {
     return new Promise((resolve, reject) => {
       db.get(
         "SELECT word FROM words WHERE word = ?",
-        [lowercaseGuess],
+        [uppercaseGuess],
         (err, row) => {
           if (err) {
             return reject(err);
@@ -139,7 +240,7 @@ app.post("/guess", async (req, res) => {
     return new Promise((resolve, reject) => {
       db.get(
         "SELECT word FROM words WHERE word = ? AND guessed = true",
-        [lowercaseGuess],
+        [uppercaseGuess],
         (err, row) => {
           if (err) {
             return reject(err);
@@ -152,7 +253,7 @@ app.post("/guess", async (req, res) => {
   const alreadyGuessed = await checkAlreadyGuessed();
   if (alreadyGuessed) {
     return res.status(400).json({
-      error: "You have already guessed this word.",
+      error: "This word has already been guessed. Try another word.",
     });
   }
 
@@ -161,7 +262,7 @@ app.post("/guess", async (req, res) => {
     return new Promise((resolve, reject) => {
       db.run(
         "UPDATE words SET guessed = true WHERE word = ?",
-        [lowercaseGuess],
+        [uppercaseGuess],
         (err) => {
           if (err) {
             return reject(err);
@@ -173,10 +274,10 @@ app.post("/guess", async (req, res) => {
   };
   await updateGuessedWord();
 
-  // Generate the result
-  const result = [];
+  // Generate the output
+  let output = [];
   for (let i = 0; i < 5; i++) {
-    result.push("_");
+    output.push("_");
   }
 
   // If word to guess is not chosen, choose word or reduce the number of possible words
@@ -203,34 +304,9 @@ app.post("/guess", async (req, res) => {
     let remainingCandidates = [];
     possibleWords.forEach(async (record) => {
       const word = record.word;
-      const charFrequencyMap = new Map();
-      let hit = 0;
-      let present = 0;
-      for (let i = 0; i < 5; i++) {
-        const char = lowercaseGuess[i];
-        charFrequencyMap.set(char, (charFrequencyMap.get(char) || 0) + 1);
-      }
-      for (let i = 0; i < 5; i++) {
-        const char = word[i];
-        if (char === lowercaseGuess[i]) {
-          hit++;
-          charFrequencyMap.set(char, charFrequencyMap.get(char) - 1);
-          if (charFrequencyMap.get(char) === 0) {
-            charFrequencyMap.delete(char);
-          }
-        }
-      }
-      for (let i = 0; i < 5; i++) {
-        const char = word[i];
-        if (char !== lowercaseGuess[i] && charFrequencyMap.has(char)) {
-          present++;
-          if (charFrequencyMap.get(char) === 1) {
-            charFrequencyMap.delete(char);
-          } else {
-            charFrequencyMap.set(char, charFrequencyMap.get(char) - 1);
-          }
-        }
-      }
+      const tempOutput = generateOutput(uppercaseGuess, word);
+      const hit = tempOutput.filter((char) => char === "0").length;
+      const present = tempOutput.filter((char) => char === "?").length;
       possibleWordsMap.set(word, {
         hit: hit,
         present: present,
@@ -280,39 +356,34 @@ app.post("/guess", async (req, res) => {
 
   // If word to guess is chosen, compare word and guess
   if (wordToGuess.length === 5) {
-    const charFrequencyMap = new Map();
-    for (let i = 0; i < 5; i++) {
-      const char = wordToGuess[i];
-      charFrequencyMap.set(char, (charFrequencyMap.get(char) || 0) + 1);
-    }
-
-    for (let i = 0; i < 5; i++) {
-      const char = lowercaseGuess[i];
-      if (char === wordToGuess[i]) {
-        result[i] = "0";
-        charFrequencyMap.set(char, charFrequencyMap.get(char) - 1);
-        if (charFrequencyMap.get(char) === 0) {
-          charFrequencyMap.delete(char);
-        }
-      }
-    }
-
-    for (let i = 0; i < 5; i++) {
-      const char = lowercaseGuess[i];
-      if (char !== wordToGuess[i] && charFrequencyMap.has(char)) {
-        result[i] = "?";
-        charFrequencyMap.set(char, charFrequencyMap.get(char) - 1);
-        if (charFrequencyMap.get(char) === 0) {
-          charFrequencyMap.delete(char);
-        }
-      }
-    }
+    output = generateOutput(wordToGuess, uppercaseGuess);
   }
 
+  output = output.join("");
+  if (output === "00000") {
+    winner = turn;
+  }
   numberOfGuesses--;
-  return res.json({ result: result.join('') });
+  broadcast({ type: "guessMade", turn, guess: uppercaseGuess, output });
+  turn = 3 - turn;
+  return res.json({ output });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server listening on ${PORT}`);
+app.post("/restart", async (req, res) => {
+  if (req.body.player === 1) {
+    wordToGuess = "";
+    numberOfGuesses = 0;
+    turn = 0;
+    winner = 0;
+    player1Connected = false;
+    await clearWordsTable();
+  }
+  else if (req.body.player === 2) {
+    player2Connected = false;
+  }
+  res.json({ message: "Game restarted successfully" });
+});
+
+app.listen(3000, () => {
+  console.log(`Server listening on port 3000`);
 });
